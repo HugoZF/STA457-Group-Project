@@ -1,0 +1,464 @@
+```{r}
+library(dplyr)
+library(tidyverse)
+library(forecast)
+library(astsa) 
+library(tseries)
+library(lubridate)
+library(ggplot2)
+library(zoo)
+```
+
+```{r}
+#SARIMA
+coco_data <- read_csv("Daily Prices_ICCO.csv")
+summary(coco_data$`ICCO daily price (US$/tonne)`)
+
+coco_data <- coco_data %>%
+  mutate(Date = as.Date(Date, format="%d/%m/%Y")) %>%
+  mutate(Price = as.numeric(`ICCO daily price (US$/tonne)`)) %>%
+  group_by(Year_Month = format(Date, "%Y-%m")) %>%  
+  summarise(Average_Price = mean(Price, na.rm = TRUE))
+```
+
+```{r}
+coco_data$Year_Month <- as.Date(paste0(coco_data$Year_Month, "-01"))
+ggplot(coco_data, aes(x = Year_Month, y = Average_Price)) +
+  geom_line(color = "black", size = 0.5) +
+  labs(
+    title = "Monthly Average Cocoa Futures Prices (USD/Ton)",
+    x = "Time",
+    y = "Price (USD per Ton)"
+  ) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "5 years") 
+```
+
+```{r}
+coco_data_ts <- ts(coco_data$Average_Price)
+acf(coco_data_ts)
+adf.test(coco_data_ts)
+```
+
+```{r}
+l_coco_data_ts <- log(coco_data_ts)
+plot(l_coco_data_ts)
+acf(l_coco_data_ts)
+
+ggplot(coco_data, aes(x = Year_Month, y = log(Average_Price))) +
+  geom_line(color = "black", size = 0.5) +
+  labs(
+    title = "Monthly Average Cocoa Futures Prices (USD/Ton)",
+    x = "Time",
+    y = "Log Average Monthly Price (USD per Ton)"
+  ) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "5 years")
+
+```
+
+```{r}
+dl_coco_data_ts <- diff(l_coco_data_ts)
+adf.test(dl_coco_data_ts, alternative = "stationary")
+acf(dl_coco_data_ts)
+pacf(dl_coco_data_ts)
+
+diff_data <- coco_data[-1, ] 
+diff_data$Difference <- diff(log(coco_data$Average_Price))
+
+ggplot(diff_data, aes(x = Year_Month, y = Difference)) +
+  geom_line(color = "black", size = 0.5) +
+  labs(title = "First Order Difference", x = "Time", y = "1ST OD of Log Monthly Average Futures Price") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "5 years")
+```
+
+```{r}
+train <- ts(l_coco_data_ts[1:361])
+test <- ts(l_coco_data_ts[362:365])
+arima_model1 <- sarima(train, 1,1,0)
+arima_model2 <- sarima(train, 0,1,1)
+```
+
+```{r}
+sarima_results1 <- sarima.for(train, 4, 1,1,0)
+predicted_values1 <- ts(sarima_results1$pred)
+accuracy(predicted_values1, test)
+
+sarima_results2 <- sarima.for(train, 4, 0,1,1)
+predicted_values2 <- ts(sarima_results2$pred)
+accuracy(predicted_values2, test)
+```
+
+```{r}
+predicted_values1_df <- data.frame(predicted_values1)
+predicted_values1_df$Time <- seq.Date(from = as.Date("2024-11-01"), by = "month", length.out = nrow(predicted_values1_df))
+
+predicted_values2_df <- data.frame(predicted_values2)
+predicted_values2_df$Time <- seq.Date(from = as.Date("2024-11-01"), by = "month", length.out = nrow(predicted_values2_df))
+
+coco_last10_obs <- tail(coco_data, 10)
+ggplot(coco_last10_obs, aes(x = Year_Month, y = log(Average_Price))) +
+  geom_line(color = "black", size = 0.5) +
+  geom_line(data = predicted_values1_df, aes(x = Time, y = predicted_values1),   
+  color = "red", size = 0.5) +
+  labs(title = "Actual vs Forecast ARIMA(1,1,0)", x = "Time", y = " Log Price") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 months")
+
+ggplot(coco_last10_obs, aes(x = Year_Month, y = log(Average_Price))) +
+  geom_line(color = "black", size = 0.5) +
+  geom_line(data = predicted_values2_df, aes(x = Time, y = predicted_values2),   
+  color = "red", size = 0.5) +
+  labs(title = "Actual vs Forecast ARIMA(1,1,0)", x = "Time", y = " Log Price") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 months")
+```
+
+```{r}
+## SARIMA model
+s_coco_data_ts <- ts(coco_data$Average_Price, frequency = 12)
+ls_coco_data_ts <- log(s_coco_data_ts)
+dls_coco_data_ts <- diff(ls_coco_data_ts)
+ddls_coco_data_ts <- diff(dls_coco_data_ts, 12)
+adf.test(ddls_coco_data_ts)
+```
+
+```{r}
+train_s <- ts(ls_coco_data_ts[1:361])
+test_s <- ts(ls_coco_data_ts[362:365])
+acf2(ddls_coco_data_ts)
+sarima_model1 <- sarima(train_s, 0,1,1, 0,1,1, 12)
+```
+
+```{r}
+sarima_results <- sarima.for(train_s, 4, 0,1,1, 0,1,1,12)
+predicted_values3 <- ts(sarima_results$pred)
+accuracy(predicted_values3, test_s)
+```
+
+```{r}
+predicted_values3_df <- data.frame(predicted_values3)
+predicted_values3_df$Time <- seq.Date(from = as.Date("2024-11-01"), by = "month", length.out = nrow(predicted_values3_df))
+
+ggplot(coco_last10_obs, aes(x = Year_Month, y = log(Average_Price))) +
+  geom_line(color = "black", size = 0.5) +
+  geom_line(data = predicted_values3_df, aes(x = Time, y = predicted_values3),   
+  color = "red", size = 0.5) +
+  labs(title = "Actual vs Forecast SARIMA(0,1,1) x (0,1,1) [12] ", x = "Time", y = " Log Price") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 months")
+
+```
+
+```{r}
+## Temp Data
+weather_data <- read_csv("Ghana_data.csv")
+weather_data <- weather_data %>%
+  mutate(DATE = as.Date(DATE)) %>%
+  mutate(Year_Month = format(DATE, "%Y-%m")) %>%
+  group_by(Year_Month) %>%
+  summarise(TAVG = mean(TAVG, na.rm = TRUE)) %>%
+  select(Year_Month, TAVG) %>%
+  filter(Year_Month >= "1994-10")
+```
+
+```{r}
+all_months <- seq(from = as.Date(paste0(min(weather_data$Year_Month), "-01")), to = as.Date(paste0(max(weather_data$Year_Month), "-01")), by = "month")
+all_months_fmt <- format(all_months, "%Y-%m")
+missing_months <- setdiff(all_months_fmt, weather_data$Year_Month)
+print(missing_months)
+```
+
+```{r}
+weather_data <- add_row(weather_data, Year_Month = "1994-12",TAVG = 83)
+weather_data <- add_row(weather_data, Year_Month = "2001-10",TAVG = 79.4)
+weather_data <- add_row(weather_data, Year_Month = "2001-12", TAVG = 82)
+weather_data <- add_row(weather_data, Year_Month = "2024-12", TAVG = 82.8)
+weather_data <- add_row(weather_data, Year_Month = "2025-01", TAVG = 84.1)
+weather_data <- add_row(weather_data, Year_Month = "2025-02", TAVG = 85.9)
+
+weather_data <- weather_data %>%
+  arrange(Year_Month)
+```
+
+```{r}
+weather_data_ts <- ts(weather_data$TAVG)
+train_temp <- ts(weather_data_ts[1:361])
+test_temp <- ts(weather_data_ts[362:365])
+```
+
+```{r}
+weather_data$Year_Month <- as.Date(paste0(weather_data$Year_Month, "-01"))
+ggplot(weather_data, aes(x = Year_Month, y = TAVG)) +
+  geom_line(color = "black", size = 0.5) +
+  labs(title = "Monthly Average Temperature in Ghana", x = "Time", y = "Temperature in Fahrenheit") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "5 years")
+```
+
+```{r}
+## Exchange Rate
+USD_GHS_Historical_Data <- read_csv("USD_GHS Historical Data.csv") #USD to GHS
+
+Exchange_Rate_Data <- USD_GHS_Historical_Data %>%
+  mutate(Date = format(Date, "%Y-%m")) %>%
+  rename(Exchange_Rate = Price) %>%
+  select(Date, Exchange_Rate) %>%
+  arrange(Date)
+```
+
+```{r}
+Exchange_Rate_Data_ts <- ts(Exchange_Rate_Data$Exchange_Rate)
+train_er <- ts(Exchange_Rate_Data_ts[1:361])
+test_er <- ts(Exchange_Rate_Data_ts[362:365])
+```
+
+```{r}
+ggplot(USD_GHS_Historical_Data, aes(x = Date, y = Price)) +
+  geom_line(color = "black", size = 0.5) +
+  labs(title = "Monthly Average Exchange Rate GHS/USD", x = "Time", y = "Exchange Rate") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "5 years")
+```
+
+```{r}
+## PRCP Data
+PRCP_data <- read_csv("Ghana_data.csv")
+summary(PRCP_data$PRCP)
+PRCP_data$PRCP[is.na(PRCP_data$PRCP)] <- 0
+summary(PRCP_data$PRCP)
+
+PRCP_data <- PRCP_data %>%
+  mutate(DATE = as.Date(DATE)) %>%
+  mutate(Year_Month = format(DATE, "%Y-%m")) %>%
+  group_by(Year_Month) %>%
+  summarise(PRCP = mean(PRCP, na.rm = TRUE)) %>%
+  select(Year_Month, PRCP) %>%
+  filter(Year_Month >= "1994-10")
+```
+
+```{r}
+all_months <- seq(from = as.Date(paste0(min(PRCP_data$Year_Month), "-01")), to = as.Date(paste0(max(PRCP_data$Year_Month), "-01")), by = "month")
+all_months_fmt <- format(all_months, "%Y-%m")
+missing_months <- setdiff(all_months_fmt, PRCP_data$Year_Month)
+print(missing_months)
+```
+
+```{r}
+PRCP_data <- add_row(PRCP_data, Year_Month = "1994-12", PRCP = 0)
+PRCP_data <- add_row(PRCP_data, Year_Month = "2001-10", PRCP = 0)
+PRCP_data <- add_row(PRCP_data, Year_Month = "2001-12", PRCP = 0)
+PRCP_data <- add_row(PRCP_data, Year_Month = "2024-12", PRCP = 0)
+PRCP_data <- add_row(PRCP_data, Year_Month = "2025-01", PRCP = 0)
+PRCP_data <- add_row(PRCP_data, Year_Month = "2025-02", PRCP = 0)
+
+PRCP_data <- PRCP_data %>%
+  arrange(Year_Month)
+```
+
+```{r}
+PRCP_data_ts <- ts(PRCP_data$PRCP)
+train_prcp <- ts(PRCP_data_ts[1:361])
+test_prcp <- ts(PRCP_data_ts[362:365])
+```
+
+```{r}
+PRCP_data$Year_Month <- as.Date(paste0(PRCP_data$Year_Month, "-01"))
+ggplot(PRCP_data, aes(x = Year_Month, y = PRCP)) +
+  geom_line(color = "black", size = 0.5) +
+  labs(title = "Monthly Average Precipitation in Ghana", x = "Time", y = "Precipitation in Inches") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "5 years")
+```
+
+```{r}
+# SARIMAX  model
+train_price <- window(price_ts, start = train_start, end = train_end)
+test_price  <- window(price_ts, start = test_start, end = test_end)
+
+train_prcp <- window(prcp_ts, start = train_start, end = train_end)
+test_prcp  <- window(prcp_ts, start = test_start, end = test_end)
+# Fit SARIMAX model with PRCP
+sarimax_model <- Arima(train_price, order = c(1,1,0), seasonal = c(0,1,1), xreg = train_prcp)
+
+# Forecast next 4 months
+sarimax_forecast <- forecast(sarimax_model, xreg = test_prcp, h = 4)
+predicted_values <- ts(sarimax_forecast$mean, start = start(test_price), frequency = 12)
+
+# Evaluate model
+accuracy(predicted_values, test_price)
+
+# Optional: plot forecasts
+full_fitted <- ts(c(fitted(sarimax_model), predicted_values), start = start(train_price), frequency = 12)
+full_actual <- ts(c(train_price, test_price), start = start(train_price), frequency = 12)
+
+autoplot(full_actual, series = "Actual") +
+  autolayer(full_fitted, series = "Fitted + Forecast", color = "blue") +
+  ggtitle("SARIMAX Model Fit and Forecast: Cocoa Price with PRCP") +
+  ylab("Log Price") +
+  theme_minimal()
+
+cat("AIC of SARIMAX model:", AIC(sarimax_model), "\n")
+cat("BIC of SARIMAX model:", BIC(sarimax_model), "\n")
+
+Acf(train_price, main = "ACF of Log Cocoa Prices (Training Set)")
+Pacf(train_price, main = "PACF of Log Cocoa Prices (Training Set)")
+
+Acf(test_price, main = "ACF of Log Cocoa Prices (Test Set)")
+Pacf(test_price, main = "PACF of Log Cocoa Prices (Test Set)")
+```
+
+```{r}
+# SARIMAX (Exchange rate) model
+sarimax_model <- sarima(train_s, 0,1,1, 0,1,1,12, xreg = train_er)
+sarimax_results <- sarima.for(train_s, 4, 0,1,1, 0,1,1,12, xreg = train_er, newxreg = test_er)
+predicted_values4 <- ts(sarimax_results$pred)
+accuracy(predicted_values4, test_s)
+residuals <- sarimax_model$fit$residuals
+cor(residuals, train_er)
+```
+
+```{r}
+predicted_values4_df <- data.frame(predicted_values4)
+predicted_values4_df$Time <- seq.Date(from = as.Date("2024-11-01"), by = "month", length.out = nrow(predicted_values4_df))
+
+ggplot(coco_last10_obs, aes(x = Year_Month, y = log(Average_Price))) +
+  geom_line(color = "black", size = 0.5) +
+  geom_line(data = predicted_values4_df, aes(x = Time, y = predicted_values4),   
+  color = "red", size = 0.5) +
+  labs(title = "Actual vs Forecast SARIMA(0,1,1) x (0,1,1)[12] + Exchange Rate", x = "Time", y = " Log Price") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 months")
+```
+
+```{r}
+# SARIMAX (Exchange rate + TAVG) model
+train_x <- cbind(train_er, train_temp)
+train_x <- ts(train_x)
+test_x <- cbind(test_er, test_temp)
+test_x <- ts(test_x)
+
+sarimax_model <- sarima(train_s, 0,1,1, 0,1,1,12, xreg = train_x)
+sarimax_results <- sarima.for(train_s, 4, 0,1,1, 0,1,1,12, xreg = train_x, newxreg = test_x)
+predicted_values5 <- ts(sarimax_results$pred)
+accuracy(predicted_values5, test_s)
+residuals <- sarimax_model$fit$residuals
+cor(residuals, train_x[,1])
+cor(residuals, train_x[,2])
+```
+
+```{r}
+predicted_values5_df <- data.frame(predicted_values5)
+predicted_values5_df$Time <- seq.Date(from = as.Date("2024-11-01"), by = "month", length.out = nrow(predicted_values5_df))
+
+ggplot(coco_last10_obs, aes(x = Year_Month, y = log(Average_Price))) +
+  geom_line(color = "black", size = 0.5) +
+  geom_line(data = predicted_values5_df, aes(x = Time, y = predicted_values5),   
+  color = "red", size = 0.5) +
+  labs(title = "Actual vs Forecast SARIMA(0,1,1) x (0,1,1)[12] + Exchange Rate + Temp", x = "Time", y = " Log Price") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 months")
+```
+
+```{r}
+#ETS
+coco_data <- read.csv("Daily Prices_ICCO.csv")
+
+
+coco_data <- coco_data %>%
+  mutate(Date = as.Date(Date, format = "%d/%m/%Y")) %>%
+  mutate(Price = as.numeric(gsub("[^0-9.]", "", `ICCO.daily.price..US..tonne.`))) %>%
+  mutate(log_Price = log(Price)) %>%
+  mutate(Year_Month = format(Date, "%Y-%m")) %>%
+  group_by(Year_Month) %>%
+  summarise(
+    Average_Price = mean(Price, na.rm = TRUE),
+    Average_Log_Price = mean(log_Price, na.rm = TRUE),
+    Days_Count = n()
+  ) %>%
+  arrange(Year_Month)
+
+head(coco_data)
+summary(coco_data)
+
+
+n <- nrow(coco_data)
+train_data <- coco_data[1:(n-4), ]
+test_data <- coco_data[(n-3):n, ]
+
+ctt <- train_data %>%
+  pull(Average_Price) %>%
+  ts(frequency = 12, start = c(start_year, start_month))
+
+
+em <- list()
+ic <- data.frame(Model = character(), AIC = numeric(), AICc = numeric(), BIC = numeric(), stringsAsFactors = FALSE)
+
+for (error in c("A", "M")) {
+  for (trend in c("N", "A", "M")) {
+    for (seasonal in c("N", "A", "M")) {
+      model_name <- paste0("ETS(", error, ",", trend, ",", seasonal, ")")
+      
+      fit <- tryCatch(ets(ctt, model = paste0(error, trend, seasonal)), error = function(e) NULL)
+      
+      if (!is.null(fit)) {
+        em[[model_name]] <- fit
+        ic <- rbind(ic, data.frame(Model = model_name, AIC = fit$aic, AICc = fit$aicc, BIC = fit$bic))
+      }
+    }
+  }
+}
+
+
+icA <- unique(ic) %>% arrange(AIC)
+print(icA)
+
+icAC <- unique(ic) %>% arrange(AICc)
+print(icAC)
+
+ibc <- unique(ic) %>% arrange(BIC)
+print(ibc)
+######
+
+ets1 <- ets(coco_data$Average_Log_Price, model = "MAN", damped = FALSE)
+ets2 <- ets(coco_data$Average_Log_Price, model = "MNN")
+ets3 <- ets(coco_data$Average_Log_Price, model = "MMN", damped = FALSE)
+
+f1<-forecast(ets1, h=4)
+f2 <- forecast(ets2, h=4)
+f3 <- forecast(ets3, h=4)
+
+test_values <- test_data$Average_Log_Price
+
+
+a1 <- accuracy(f1, test_values)
+print(a1)
+
+a2 <- accuracy(f2, test_values)
+print(a2)
+
+a3 <- accuracy(f3, test_values)
+print(a3)
+```
+
+```{r}
+## SARIMAX (Exchange rate + TAVG+ PRCP) model
+train_x <- cbind(train_er, train_temp, train_prcp)
+train_x <- ts(train_x)
+test_x <- cbind(test_er, test_temp, test_prcp)
+test_x <- ts(test_x)
+
+sarimax_model <- sarima(train_s, 0,1,1, 0,1,1,12, xreg = train_x)
+sarimax_results <- sarima.for(train_s, 4, 0,1,1, 0,1,1,12, xreg = train_x, newxreg = test_x)
+predicted_values6 <- ts(sarimax_results$pred)
+accuracy(predicted_values6, test_s)
+```
+
+```{r}
+residuals <- sarimax_model$fit$residuals
+cor(residuals, train_x[,1])
+cor(residuals, train_x[,2])
+cor(residuals, train_x[,3])
+```
+
+```{r}
+predicted_values6_df <- data.frame(predicted_values6)
+predicted_values6_df$Time <- seq.Date(from = as.Date("2024-11-01"), by = "month", length.out = nrow(predicted_values6_df))
+
+ggplot(coco_last10_obs, aes(x = Year_Month, y = log(Average_Price))) +
+  geom_line(color = "black", size = 0.5) +
+  geom_line(data = predicted_values6_df, aes(x = Time, y = predicted_values6),   
+  color = "red", size = 0.5) +
+  labs(title = "Actual vs Forecast SARIMA(0,1,1) x (0,1,1)[12] + ER + Temp + PRCP", x = "Time", y = " Log Price") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 months")
+```
